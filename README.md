@@ -224,3 +224,131 @@ Private Score:  3161.70
 
 
 ![Submission](images/lightGBM_submission.png)
+
+
+
+
+# Prophet
+
+MLflow (DagsHub): `LightGBM_Training` ექსპერიმენტი - [Prophet MlFlow](https://dagshub.com/aleko-mamukashvili/Store-Sales-Forecasting.mlflow/#/experiments/3)
+
+
+
+Prophet-ი (ისევე როგორც SARIMA) აგებულია **ერთი** დროითი მწკრივის მოდელირებისთვის. მას არ შეუძლია ერთდროულად ისწავლოს ყველა (Store, Dept) კომბინაცია. ორი გზა არსებობდა: (ა) ცალკე Prophet-მოდელის გაწვრთნა თითოეული (Store, Dept) წყვილისთვის ცალ-ცალკე (2900+ მოდელი), ან (ბ) ყველა Store/Dept-ის ჯამური კვირეული გაყიდვის ერთ სერიად მოდელირება და შემდეგ შედეგის უკან, ინდივიდუალურ დონეზე პროპორციული განაწილება.
+
+ავირჩიე **(ბ) ვარიანტი** 
+---
+
+## EDA გადაწყვეტილებები აგრეგირებული სერიის საფუძველზე
+
+**ტრენდი და სეზონურობა:**
+
+![Aggregate Trend](images/prophet/agg_trend_holidays.png)
+
+
+**Seasonal Decomposition:**
+
+![Decomposition](images/prophet/seasonal_decomposition.png)
+
+ტრენდი ნელა და თანმიმდევრულად იზრდება. `growth='linear'` საკმარისია, `logistic` საჭირო არ არის.
+
+**Holiday-ეფექტი:**
+
+![Holiday Boxplot](images/prophet/holiday_boxplot.png)
+
+Holiday კვირების საშუალო საგრძნობლად მაღალია → **custom holidays dataframe** საჭიროა, არა generic `add_country_holidays('US')` (Walmart-ის `IsHoliday` კვირები ზუსტ კალენდარულ თარიღებს არ ემთხვევა).
+
+**გარე ცვლადების კორელაცია:**
+
+![Correlation](images/prophet/correlation_heatmap.png)
+
+აგრეგირებულ დონეზეც სუსტი წრფივი კავშირია. გადავწყვიტე მაინც არ გამომერიცხა თავიდანვე, ცალკე ექსპერიმენტით შემემოწმებინა.
+
+---
+
+---
+
+## Prophet Training
+
+### Run 1  Baseline
+
+დავიწყე მარტივი კონფიგურაციით: `yearly_seasonality=True`, `weekly_seasonality=False`, holidays გარეშე. ეს baseline-ია შემდგომი გაუმჯობესებისთვის.
+
+```
+wmae_train: 2,561,564
+wmae_val:   6,659,330
+```
+
+![Run 1](images/prophet/run1_baseline_forecast.png)
+
+**შენიშვნა მასშტაბზე:** ეს რიცხვები მილიონებშია, არა ათასებში რადგან ეს არის **აგრეგირებული** (ყველა Store/Dept ჯამში) კვირეული გაყიდვის შეცდომა, არა ინდივიდუალური row-სი. სწორი შედარება LightGBM-თან მხოლოდ disaggregation-ის შემდეგ არის შესაძლებელი.
+
+### Run 2 Weekly Seasonality 
+
+```
+wmae_val: 6,660,521
+```
+
+პრაქტიკულად უცვლელი, მოსალოდნელი იყო, რადგან მონაცემი კვირეულია (row = ერთი კვირა).
+
+### Run 3 Custom Walmart Holidays
+
+```
+wmae_val: 6,659,768
+```
+
+![Run 3](images/prophet/run3_holidays_forecast.png)
+
+
+### Run 4-5  Extra Regressors
+
+```
++ Temperature:                          wmae_val = 6,500,854
++ Fuel_Price, CPI, Unemployment:        wmae_val = 6,362,467  ← საუკეთესო ჯერჯერობით
+```
+
+ეკონომიკურმა regressor-ებმა რეალურად გააუმჯობესეს შედეგი, მიუხედავად იმისა, რომ EDA-ს correlation heatmap-მა სუსტი წრფივი კავშირი აჩვენა. აგრეგირებულ დონეზე ეს ცვლადები, სავარაუდოდ, გრძელვადიან ტრენდს უკეთ ხსნიან, ვიდრე short-term რყევებს.
+
+### Run 6-7  Changepoint Prior Scale
+
+```
+0.5 :  wmae_val = 6,682,233    უარესი
+0.01 :  wmae_val = 6,663,052   ასევე უარესი baseline-ზე (0.05 default)
+```
+
+ორივე მიმართულებით გადახრამ default-ისგან შედეგი გააუარესა. default `changepoint_prior_scale=0.05` აღმოჩნდა ამ სერიისთვის უკვე კარგად მორგებული.
+
+### Run 8  Multiplicative Seasonality
+
+```
+wmae_val: 6,653,438
+```
+
+ოდნავ უკეთესი additive baseline-ზე (6,659,330), მაგრამ არა საუკეთესო overall Regressor-ების დამატება მაინც სჯობდა.
+
+### Run 9  Cross-Validation (Prophet-ის built-in)
+
+Prophet-ის საკუთარი `cross_validation` utility rolling-origin ვალიდაციას აკეთებს ავტომატურად (`initial=365 days, period=90 days, horizon=90 days`). იგივე პრინციპი, რასაც LightGBM-ის rolling-window CV-შიც ვიყენებდი, უბრალოდ built-in ხელსაწყოთი.
+
+---
+
+
+
+**მიზეზი ცუდი შედეგებისა:** ერთი აგრეგირებული ტრენდის პროპორციული განაწილება ბუნებრივად ჩამორჩება per-(Store,Dept) ინდივიდუალურ მოდელირებას (lag/group feature-ებით), რადგან ერთი საერთო ფორმა ყველა დეპარტამენტისთვის ერთნაირად არ არის ვალიდური.
+
+---
+
+## Disaggregation
+
+საუკეთესო კონფიგურაციის (`PlusEconomicRegressors`) აგრეგირებული პროგნოზი გადავანაწილე უკან (Store, Dept) დონეზე  პროპორციულად, თითოეულის მხოლოდ train-პერიოდიდან გამოთვლილი ისტორიული წილის მიხედვით:
+
+```
+Row-level WMAE_train: 2,832.9
+Row-level WMAE_val:   4,872.0
+
+შედარებისთვის  LightGBM (საუკეთესო): WMAE_val = 2,746.5
+```
+
+Train-ის შედეგი (2,833) თითქმის იდენტურია LightGBM-ის მსგავს რიცხვებთან  ლოგიკურია, რადგან train-პერიოდზე პროპორციული განაწილება საკმაოდ ზუსტია. Val-ზე სხვაობა (4,872 vs 2,746) მოსალოდნელი. ეს არის ერთი აგრეგირებული მოდელის და 2900+ ინდივიდუალურად გაწვრთნილი (Store,Dept) მოდელის ბუნებრივი სხვაობა
+
+
