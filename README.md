@@ -629,6 +629,117 @@ Private Score:  3247.97
 
 
 
+# Temporal Fusion Transformer (TFT)
+
+MLflow (DagsHub): `TFT_Training` ექსპერიმენტი — [TFT MLflow](https://dagshub.com/aleko-mamukashvili/Store-Sales-Forecasting.mlflow/#/experiments/7)
+
+
+**TFT-მა მოგვცა ზუსტად ის, რასაც ჩვენი დატა მოითხოვდა:**
+- **Static** ცვლადები (Store Type, Size  დროში არ იცვლება)
+- **Known-future** ცვლადები (IsHoliday მომავალშიც წინასწარ ცნობილია)
+- **Observed** ცვლადები (Temperature, CPI, Fuel_Price, Unemployment მხოლოდ წარსულში ვიცით)
+
+TFT-ს ჩაშენებული აქვს ამ სამივე ტიპის ცალკე დამუშავების მექანიზმი (**Variable Selection Networks**) 
+
+## მეთოდოლოგიური გადაწყვეტილება თავიდანვე — Global Multi-Series, ყოველგვარი აგრეგაციის გარეშე
+
+N-BEATS-ის გამოცდილებამ პირდაპირ გვასწავლა: აგრეგაცია+disaggregation ეწინააღმდეგება global-architecture-ების არსს (მხოლოდ 25 window რჩებოდა სასწავლად, სანამ Global Multi-Series-ზე არ გადავედით). TFT-ს ჩაშენებული აქვს მრავალსერიიანი მხარდაჭერა (`TimeSeriesDataSet`-ის `group_ids` მექანიზმი)  ამიტომ პირველივე Run-იდან, ყოველგვარი ცდის გარეშე, გამოვიყენეთ ეს native მექანიზმი: 3254 (Store, Dept) სერია პირდაპირ გადაეცემა მოდელს, disaggregation არასდროს გვჭირდება. Row-level WMAE პირდაპირ, approximation-ის გარეშე გამოითვლება.
+
+---
+
+## EDA - Static / Known / Observed კატეგორიზაციისთვის
+
+### Static Candidates  Store Type & Size
+
+![Type and Size](images/tft/type_size.png)
+
+Type-ების მიხედვით Weekly_Sales-ის განაწილება ცალსახად განსხვავებულია (A>B>C), Size-თან დადებითი კავშირიც ჩანს  იგივე დასკვნა, რაც LightGBM-ის EDA-შიც.
+
+### Known-Future Candidate -  IsHoliday
+
+![Holiday Spikes](images/tft/holiday_spikes.png)
+
+Holiday-spike-ები ცხადია საერთო ტრენდის გრაფიკზე. `IsHoliday` კალენდარული ფაქტია და მომავალშიც წინასწარ ცნობილია`time_varying_known_categoricals`.
+
+### Observed/Unknown Candidates - ეკონომიკური ცვლადები
+
+![Correlation Heatmap](images/tft/correlation_heatmap.png)
+
+Correlation heatmap-მა კვლავ სუსტი წრფივი კავშირი აჩვენა Temperature/Fuel_Price/CPI/Unemployment-სა და Weekly_Sales-ს შორის (იგივე, რაც LightGBM/Prophet-შიც). განსხვავებით LightGBM-ის ablation-გადაწყვეტილებისგან (სადაც ეს ცვლადები საბოლოოდ მოვაცილეთ), აქ არ გამოვრიცხეთ წინასწარ, ეს ცვლადები ფაქტობრივი დაკვირვებებია , ამიტომ `time_varying_unknown_reals`-ში მიდის, და TFT-ის attention-ზე დაფუძნებულ Variable Selection Network-ს მივანდეთ გადაწყვეტილება. ცალკე ტესტი გავაკეთეთ (Run 4), ღირს თუ არა.
+
+---
+
+## Splitting
+
+იგივე holiday-aware window, რაც LightGBM/Prophet/N-BEATS-ში: Train < 2011-11-01, Val 2011-11-01 – 2012-02-15.
+
+---
+
+## Feature Engineering & Feature Selection - TimeSeriesDataSet კონფიგურაცია
+
+### 1. Coverage-შემოწმება — Leak-Safe ფილტრაცია
+
+იგივე საკითხი, რასაც N-BEATS-შიც წავაწყდით: ზოგიერთი (Store, Dept) წყვილი მხოლოდ val-პერიოდში ჩნდება. `TimeSeriesDataSet`-ს ეს categorical encoding-ისთვის წინასწარ ნანახი უნდა ჰქონდეს.
+
+```
+Coverage: 3254 / 3309 (Store, Dept) წყვილი გამოიყენება (98.3%)
+```
+
+ეს უკეთესი დაფარვაა, ვიდრე N-BEATS-ის 95.2%. `TimeSeriesDataSet`-ის encoder-length მოთხოვნა ოდნავ უფრო flexible აღმოჩნდა ჩვენს custom windowing-თან შედარებით.
+
+### 2. NaN-შევსება
+
+`Temperature`/`Fuel_Price`/`CPI`/`Unemployment`-ის NaN-ები მხოლოდ train-პერიოდის საშუალოთი ივსება (არა მთელი df-ის საშუალოთი) 
+
+### 3. Static / Known / Unknown დაყოფა - ეს არის TFT-ის "Feature Selection"-ის ანალოგი
+
+`build_datasets()` ფუნქცია საშუალებას გვაძლევს, ცალკეული run-ებში სისტემურად დავამატოთ/მოვაცილოთ feature-ჯგუფები, ეს ზუსტად feature-ablation პროცესია
+
+| Run | static | known | unknown |
+|---|---|---|---|
+| 1 (Baseline) | — | — | Weekly_Sales |
+| 2 | Store, Type, Size | — | Weekly_Sales |
+| 3 | Store, Type, Size | IsHoliday | Weekly_Sales |
+| 4 | Store, Type, Size | IsHoliday | Weekly_Sales + 4 ეკონომიკური ცვლადი |
+
+---
+
+## ექსპერიმენტები (Run 1-6)
+
+| Run | Feature-ები | WMAE_val (row-level) |
+|---|---|---|
+| 1 — Baseline | მხოლოდ target | 5,104.5 |
+| 2 — + Static | Store, Type, Size | 4,725.2 |
+| 3 — + Known (IsHoliday) | + IsHoliday | 4,915.7 |
+| **4 — + Observed Covariates** | სრული feature-set | **4,521.9** ← საუკეთესო Run 1-6-დან |
+| 5 — Wider Network (hidden=16) | სრული, hidden=16 | 4,916.7 |
+| 6 — Lower LR + 3 epoch | სრული, lr=5e-4 | 4,770.4 |
+
+### გაუთვალისწინებელი აღმოჩენა - Run 3
+
+`+IsHoliday`-მ გააუარესა შედეგი Run 2-თან შედარებით (4725→4916), საწინააღმდეგოდ იმისა, რასაც LightGBM-ში ვხედავდით (სადაც holidayწონამ დაეხმარა). სავარაუდო მიზეზი: 2 epoch არასაკმარისია, რომ Variable Selection Network-მა ახალი categorical feature რეალურად ისწავლოს,ეს პირდაპირ იმაზე მიუთითებდა, რომ საჭირო იყო მეტი ტრენინგის დრო, რაც სწორედ ქვემოთ გავასწორეთ.
+
+---
+
+## Hyperparameter Search + ღრმა ტრენინგი 
+
+Run 1-6 განზრახ იყო მცირე (`hidden_size=8-16`, `epochs=2-3`) - საწყისი ჩონჩხის სისწრაფისთვის, ისევე როგორც N-BEATS-ის პირველი Global Multi-Series ცდა. მას შემდეგ, რაც N-BEATS-ში Random Search + Ensemble-მა რეალურად გააუმჯობესა შედეგი, იგივე პრინციპი TFT-შიც გავიმეორეთ:
+
+
+**Random Search:** 5 trial, თითოეული 3 epoch, `hidden_size`, `attention_head_size`, `dropout`, `hidden_continuous_size`, `learning_rate`-ის კომბინაციები.
+
+**საბოლოო ღრმა ტრენინგი:** საუკეთესო კონფიგურაცია, **10 epoch**-ით (Run 1-6-ის 2-3-თან შედარებით)
+
+
+---
+
+## საბოლოო შედარება 
+
+| მოდელი | WMAE_val (row-level) |
+|---|---|
+| TFT (Run 1-6, search-მდე) | 4,521.9 |
+| TFT (Deep Search, საბოლოო) | 3732.6 |
+
 
 
 
