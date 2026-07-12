@@ -359,7 +359,7 @@ Train-ის შედეგი (2,833) თითქმის იდენტუ
 
 # N-BEATS 
 
-MLflow (DagsHub): `N_beats` ექსპერიმენტი - [Prophet MlFlow](https://dagshub.com/aleko-mamukashvili/Store-Sales-Forecasting.mlflow/#/experiments/5)
+MLflow (DagsHub): `N_beats` ექსპერიმენტი - [N_Beats MlFlow](https://dagshub.com/aleko-mamukashvili/Store-Sales-Forecasting.mlflow/#/experiments/5)
 
 ---
 
