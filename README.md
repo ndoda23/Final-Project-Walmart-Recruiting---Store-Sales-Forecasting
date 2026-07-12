@@ -993,11 +993,12 @@ MLflow (DagsHub): `DLinear_Training` ექსპერიმენტი - [DLi
 
 ყველა გაშვებული ექსპერიმენტის WMAE-ს შედარება სვეტოვან დიაგრამაზე აჩვენებს Run 4-ის აშკარა უპირატესობას:
 
-![DLinear Runs Comparison](images/Dlinear/dlinear_comparison_bar.png) 
+![DLinear Prediction](images/Dlinear/dlinear_prediction_sample.png) 
 
 ### საპროგნოზო გრაფიკი სატესტო მონაცემებზე (Store 1, Dept 1):
 
-![DLinear Prediction](images/Dlinear/dlinear_prediction_sample.png) 
+![DLinear Runs Comparison](images/Dlinear/dlinear_comparison_bar.png) 
+
 *გრაფიკი ნათლად აჩვენებს, თუ როგორ ახერხებს DLinear წარსული ისტორიის (Input) საფუძველზე ზედმიწევნით ზუსტად აჰყვეს რეალურ (Actual) გაყიდვებს სატესტო 20-კვირიან ინტერვალში.*
 
 ---
