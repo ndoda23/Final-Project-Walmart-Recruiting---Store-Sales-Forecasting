@@ -624,7 +624,7 @@ wmae_val: 2826.74
 Public Score:   3377.41
 Private Score:  3247.97
 ```
-
+![subbmition](images/xgboost/subbmition.png)
 
 
 
